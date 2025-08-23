@@ -16,6 +16,8 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: chat-service-kafka:29092
       ENABLE_KAFKA: true
       MOCK_AUTH: ${MOCK_AUTH:-true}
+      OPENAI_API_KEY: YzU1MGExYWYtODhiYy00MWE1LWIzMjAtMWMxMGYxN2IzZGVh.bbf892ff8b0054533d307ed3ba2ffae5
+      OPENAI_API_PROXY: https://foundation-models.api.cloud.ru
     ports:
       - '8003:8010'  # Изменили порт на 8003 как указано в документе
     depends_on:

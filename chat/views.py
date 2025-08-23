@@ -569,6 +569,12 @@ MODELS = {
         'max_tokens': 131072,
         'max_prompt_tokens': 123072,
         'max_response_tokens': 8000,
+    },
+    'deepseek-ai/DeepSeek-R1-Distill-Llama-70B': {
+        'name': 'deepseek-ai/DeepSeek-R1-Distill-Llama-70B',
+        'max_tokens': 4096,
+        'max_prompt_tokens': 3096,
+        'max_response_tokens': 1000
     }    
 }
 
@@ -702,6 +708,157 @@ def upload_conversations(request):
     
     # return a list of new conversation id
     return Response(conversation_ids)
+
+
+@api_view(['POST'])
+def conversation_cloud(request):
+    """Временный эндпоинт для тестирования stream без работы с базой данных"""
+    model_name = request.data.get('name')
+    message_object_list = request.data.get('message')
+    conversation_id = request.data.get('conversationId')
+    request_max_response_tokens = request.data.get('max_tokens')
+    system_content = request.data.get('system_content')
+    if not system_content:
+        system_content = "You are a helpful assistant."
+    temperature = request.data.get('temperature', 0.7)
+    top_p = request.data.get('top_p', 1)
+    frequency_penalty = request.data.get('frequency_penalty', 0)
+    presence_penalty = request.data.get('presence_penalty', 0)
+    openai_api_key = request.data.get('openaiApiKey')
+
+    logger.info('conversation_cloud: conversation_id = %s message_objects = %s', conversation_id, message_object_list)
+
+    # Используем переменную окружения для API ключа
+    if openai_api_key is None:
+        openai_api_key = os.getenv('OPENAI_API_KEY')
+        if not openai_api_key:
+            return Response(
+                {
+                    'error': 'There is no available API key'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    logger.info('conversation_cloud: before get_openai, api_key = %s', openai_api_key[:20] if openai_api_key else None)
+    my_openai = get_openai(openai_api_key)
+    logger.info('conversation_cloud: after get_openai, api_base = %s', my_openai.api_base)
+    llm_openai_env(my_openai.api_base, my_openai.api_key)
+
+    model = get_current_model(model_name, request_max_response_tokens)
+    llm_openai_model(model)
+
+    def stream_content_simple():
+        try:
+            # Прямая интеграция с cloud.ru API
+            import requests
+            
+            # Формируем сообщения
+            messages = [{"role": "system", "content": system_content}]
+            for msg in message_object_list:
+                messages.append({"role": msg['role'], "content": msg['content']})
+            
+            # Данные для запроса к cloud.ru
+            cloud_data = {
+                "model": model['name'],
+                "messages": messages,
+                "temperature": temperature,
+                "top_p": top_p,
+                "max_tokens": model['max_response_tokens'],
+                "frequency_penalty": frequency_penalty,
+                "presence_penalty": presence_penalty,
+                "stream": True
+            }
+            
+            # Заголовки для cloud.ru API
+            headers = {
+                'Authorization': f'Bearer {openai_api_key}',
+                'Content-Type': 'application/json'
+            }
+            
+            logger.info('conversation_cloud: sending direct request to cloud.ru')
+            logger.info('conversation_cloud: URL = https://foundation-models.api.cloud.ru/v1/chat/completions')
+            logger.info('conversation_cloud: data = %s', cloud_data)
+            logger.info('conversation_cloud: headers = %s', {k: v[:20] + '...' if k == 'Authorization' else v for k, v in headers.items()})
+            
+            # Отправляем запрос к cloud.ru
+            response = requests.post(
+                'https://foundation-models.api.cloud.ru/v1/chat/completions',
+                headers=headers,
+                json=cloud_data,
+                stream=True,
+                timeout=60
+            )
+            
+            logger.info('conversation_cloud: cloud.ru response status = %s', response.status_code)
+            
+            if response.status_code != 200:
+                error_text = response.text
+                logger.error('conversation_cloud: cloud.ru error: %s', error_text)
+                yield sse_pack('error', {
+                    'error': f'Cloud.ru API error: {response.status_code} - {error_text}'
+                })
+                return
+            
+            completion_text = ''
+            
+            # Обрабатываем stream ответ от cloud.ru
+            for line in response.iter_lines():
+                if line:
+                    line_str = line.decode('utf-8')
+                    logger.info('conversation_cloud: received line: %s', line_str)
+                    
+                    if line_str.startswith('data: '):
+                        data_str = line_str[6:]  # Убираем 'data: '
+                        
+                        if data_str.strip() == '[DONE]':
+                            logger.info('conversation_cloud: stream finished')
+                            break
+                            
+                        try:
+                            data_json = json.loads(data_str)
+                            if 'choices' in data_json and len(data_json['choices']) > 0:
+                                choice = data_json['choices'][0]
+                                
+                                if 'finish_reason' in choice and choice['finish_reason'] is not None:
+                                    logger.info('conversation_cloud: finished with reason: %s', choice['finish_reason'])
+                                    break
+                                    
+                                if 'delta' in choice:
+                                    delta = choice['delta']
+                                    # Обрабатываем как content, так и reasoning_content
+                                    if 'content' in delta:
+                                        content = delta['content']
+                                        completion_text += content
+                                        yield sse_pack('message', {'content': content})
+                                    elif 'reasoning_content' in delta:
+                                        content = delta['reasoning_content']
+                                        completion_text += content
+                                        yield sse_pack('message', {'content': content})
+                                    
+                        except json.JSONDecodeError as e:
+                            logger.warning('conversation_cloud: failed to parse JSON: %s', e)
+                            continue
+            
+            yield sse_pack('done', {
+                'messageId': 'temp-id',
+                'conversationId': conversation_id or 'new',
+                'newDocId': None,
+            })
+            
+        except Exception as e:
+            logger.error('conversation_cloud: error: %s', str(e))
+            yield sse_pack('error', {
+                'error': str(e)
+            })
+            return
+
+    response = StreamingHttpResponse(
+        stream_content_simple(),
+        content_type='text/event-stream'
+    )
+    response['X-Accel-Buffering'] = 'no'
+    response['Cache-Control'] = 'no-cache'
+    return response
 
 
 @api_view(['POST'])
@@ -1208,6 +1365,8 @@ def num_tokens_from_messages(messages, model="gpt-3.5-turbo-0301"):
 def get_openai(openai_api_key):
     openai.api_key = openai_api_key
     proxy = os.getenv('OPENAI_API_PROXY')
+    logger.info('get_openai: proxy = %s', proxy)
     if proxy:
         openai.api_base = proxy
+        logger.info('get_openai: set api_base = %s', openai.api_base)
     return openai

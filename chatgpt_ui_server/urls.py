@@ -16,7 +16,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
-from chat.views import conversation, gen_title, upload_conversations
+from chat.views import conversation, conversation_cloud, gen_title, upload_conversations
 from utils import external_auth as auth_client
 
 def health_check(request):
@@ -97,6 +97,7 @@ urlpatterns = [
     
     # Legacy endpoints (будут заменены на Kafka)
     path('api/conversation/', conversation, name='conversation'),
+    path('api/conversation_cloud/', conversation_cloud, name='conversation_cloud'),
     path('api/upload_conversations/', upload_conversations, name='upload_conversations'),
     path('api/gen_title/', gen_title, name='gen_title'),
     
