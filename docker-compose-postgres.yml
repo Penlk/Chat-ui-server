@@ -24,18 +24,44 @@ services:
       - DJANGO_SETTINGS_MODULE=chatgpt_ui_server.settings_postgres
       - DATABASE_URL=postgresql://chat_service_user:chat_service_password@postgres:5432/chat_service_db
       - SERVICE_TOKEN=chat-service-secret-key
-      - KAFKA_BOOTSTRAP_SERVERS=chat-service-kafka:29092
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ENABLE_KAFKA=true
       - MOCK_AUTH=true
     ports:
       - "8003:8010"
     depends_on:
       - postgres
-      - chat-service-kafka
     networks:
       - chat-network
+      - default
+      - api-gateway_default
     volumes:
       - ./:/app
+
+  kafka-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    container_name: chat-service-kafka-consumer
+    environment:
+      - DJANGO_SETTINGS_MODULE=chatgpt_ui_server.settings_postgres
+      - DATABASE_URL=postgresql://chat_service_user:chat_service_password@postgres:5432/chat_service_db
+      - SERVICE_TOKEN=chat-service-secret-key
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ENABLE_KAFKA=true
+      - MOCK_AUTH=true
+    depends_on:
+      - postgres
+      - wsgi-server
+    networks:
+      - chat-network
+      - default
+      - api-gateway_default
+      - tarrification-service_default
+    volumes:
+      - ./:/app
+    command: python /app/chat/kafka_consumer_service_simple.py
+    restart: unless-stopped
 
   chat-service-zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
@@ -54,8 +80,8 @@ services:
     depends_on:
       - chat-service-zookeeper
     ports:
-      - "9095:9095"
-      - "29095:29095"
+      - "29095:29092"
+      - "9095:9092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: chat-service-zookeeper:2184
@@ -73,3 +99,7 @@ volumes:
 networks:
   chat-network:
     driver: bridge
+  api-gateway_default:
+    external: true
+  tarrification-service_default:
+    external: true

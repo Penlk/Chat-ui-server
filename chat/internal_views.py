@@ -270,10 +270,17 @@ def test_kafka_integration(request):
         )
 
 
+
+
+
 @api_view(['POST'])
 def fallback_send_message(request):
     """Fallback endpoint для отправки сообщения (без Kafka)"""
     logger.info("⚠️ Using fallback HTTP endpoint for send_message")
+    
+    # Импортируем модели и функции
+    from .models import Message, Conversation
+    from .serializers import MessageSerializer
     
     # Базовая реализация без Kafka
     return Response({

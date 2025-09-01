@@ -12,6 +12,8 @@ urlpatterns = [
     path('kafka-status/', internal_views.kafka_status, name='kafka_status'),
     path('metrics/', internal_views.service_metrics, name='service_metrics'),
     
+
+    
     # Fallback HTTP endpoints (legacy поддержка)
     path('test-kafka/', internal_views.test_kafka_integration, name='test_kafka_integration'),
     path('fallback/send-message/', internal_views.fallback_send_message, name='fallback_send_message'),

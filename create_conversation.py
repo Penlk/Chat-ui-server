@@ -1,0 +1,57 @@
+import requests
+import json
+
+# Создание беседы
+url = "http://localhost:8003/api/chat/conversations/"  # Правильный URL
+headers = {
+    "Content-Type": "application/json",
+    "X-User-Data": '{"jwt_token":"eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJVaGtKejZ2TlREWEpnQnoxdGJjSXhjLVc2U0V2NERpQVZVOHFhTGZrckZZIn0.eyJleHAiOjE3NTYxMzkxOTAsImlhdCI6MTc1NjEzODg5MCwianRpIjoib25ydHJvOjRiYTc2NTIwLTQ3NjAtMTk4NC02YWNmLTNlNDA3MDIyZjE3ZiIsImlzcyI6Imh0dHA6Ly9rZXljbG9hazo4MDgwL3JlYWxtcy9hdXRoLXNlcnZpY2UiLCJhdWQiOiJhY2NvdW50Iiwic3ViIjoiZWFmNTVhZjktMDQ2Ny00NGRjLThmMTMtOGFmNjg5Yjk3YTA5IiwidHlwIjoiQmVhcmVyIiwiYXpwIjoiYXV0aC1zZXJ2aWNlIiwic2lkIjoiOTI3YTNjZDctMGNiMy00MGUyLWIwYzUtYTkxNzQ4MWJiZGZiIiwiYWNyIjoiMSIsImFsbG93ZWQtb3JpZ2lucyI6WyIgaHR0cDovLzEyNy4wLjAuMTo4MDk5Il0sInJlYWxtX2FjY2VzcyI6eyJyb2xlcyI6WyJkZWZhdWx0LXJvbGVzLWF1dGgtc2VydmljZSIsIm9mZmxpbmVfYWNjZXNzIiwidW1hX2F1dGhvcml6YXRpb24iXX0sInJlc291cmNlX2FjY2VzcyI6eyJhY2NvdW50Ijp7InJvbGVzIjpbIm1hbmFnZS1hY2NvdW50IiwibWFuYWdlLWFjY291bnQtbGlua3MiLCJ2aWV3LXByb2ZpbGUiXX19LCJzY29wZSI6InByb2ZpbGUgZW1haWwiLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwibmFtZSI6IlRlc3QyIEFjY291bnQiLCJwcmVmZXJyZWRfdXNlcm5hbWUiOiJ0ZXN0MkBleGFtcGxlLmNvbSIsImdpdmVuX25hbWUiOiJUZXN0MiIsImZhbWlseV9uYW1lIjoiQWNjb3VudCIsImVtYWlsIjoidGVzdDJAZXhhbXBsZS5jb20ifQ.Jp2kMjEYpjCuHidZdqSdDgtjRiEjGQ4tGx8TJO3mwqi5mv-rHPePFek3N3oF1w5YQrD2YSReU4I7VwRqkqs7M8W1UX62PAje8vh4HT6qS0zlhAPKhOeCsd8t8J3yn6y9pBX8hPyD2F9JUwIsF0nAKTm1aykCuvBkoBse7OfHu5npBEUWnERc6rWhH83pbx7vk-aDYuo2ylH32Ro0tZEjAGUknl2VfigrmJGSncoS-isC6hcSFi5iF7tUBbnffayEuPnHS4o9HdSMB4-6naERIOKZgHhwULjXtLUDK2M2YBSw9azy-ZNeYZVQlyiC5NWR267uUDyOpH4qr-k9EJeL8w","user_data":{"sub":"eaf55af9-0467-44dc-8f13-8af689b97a09","email":"test2@example.com","full_name":"Test2 Account","orgs":[],"active_org_id":null}}'
+}
+
+data = {
+    "topic": "Тестовая беседа"
+}
+
+try:
+    print("Создаем беседу...")
+    print(f"URL: {url}")
+    print(f"Headers: {headers}")
+    print(f"Data: {data}")
+    
+    response = requests.post(url, headers=headers, json=data, timeout=30)
+    
+    print(f"\nСтатус: {response.status_code}")
+    print(f"Заголовки ответа: {dict(response.headers)}")
+    
+    if response.status_code == 201:
+        print("✅ Беседа создана!")
+        conversation_data = response.json()
+        print(f"Данные беседы: {conversation_data}")
+        
+        # Теперь отправляем сообщение в эту беседу
+        conversation_id = conversation_data.get('conversation_id')
+        print(f"\nОтправляем сообщение в беседу {conversation_id}...")
+        
+        message_url = "http://localhost:8003/api/chat/messages/"
+        message_data = {
+            "message": "Тестовое сообщение в новую беседу",
+            "conversation": conversation_id,
+            "is_bot": False,
+            "message_type": 0
+        }
+        
+        message_response = requests.post(message_url, headers=headers, json=message_data, timeout=30)
+        
+        print(f"Статус сообщения: {message_response.status_code}")
+        if message_response.status_code == 201:
+            print("✅ Сообщение отправлено!")
+            print(f"Данные сообщения: {message_response.json()}")
+        else:
+            print(f"❌ Ошибка отправки сообщения: {message_response.text}")
+    else:
+        print(f"❌ Ошибка создания беседы: {response.text}")
+        
+except Exception as e:
+    print(f"❌ Исключение: {e}")
+    import traceback
+    traceback.print_exc()

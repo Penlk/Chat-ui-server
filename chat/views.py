@@ -173,7 +173,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             queryset = queryset.order_by('-created_at')
         conversationId = self.request.query_params.get('conversationId')
         if conversationId:
-            queryset = queryset.filter(conversation=conversationId).order_by('created_at')
+            queryset = queryset.filter(conversation_id=conversationId).order_by('created_at')
         return queryset
 
     def create(self, request, *args, **kwargs):
@@ -191,7 +191,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             try:
                 Conversation.objects.get(sub=user_sub, conversation_id=conversation_id)
                 data = request.data.copy()
-                data['conversation'] = conversation_id
+                data['conversation_id'] = conversation_id
             except Conversation.DoesNotExist:
                 return Response({"error": f"Conversation with conversation_id {conversation_id} not found for user"}, status=status.HTTP_404_NOT_FOUND)
         elif conversation_value:
@@ -199,7 +199,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             try:
                 Conversation.objects.get(sub=user_sub, conversation_id=conversation_value)
                 data = request.data.copy()
-                data['conversation'] = conversation_value
+                data['conversation_id'] = conversation_value
             except Conversation.DoesNotExist:
                 return Response({"error": f"Conversation with conversation_id {conversation_value} not found for user"}, status=status.HTTP_404_NOT_FOUND)
         else:
@@ -209,8 +209,9 @@ class MessageViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         serializer.validated_data['sub'] = user_sub
 
-        # Получаем следующий message_id для пользователя
-        last_message = Message.objects.filter(sub=user_sub).order_by('-message_id').first()
+        # Получаем следующий message_id для конкретной беседы
+        conversation_id = data.get('conversation_id')
+        last_message = Message.objects.filter(sub=user_sub, conversation_id=conversation_id).order_by('-message_id').first()
         next_message_id = 1 if not last_message else last_message.message_id + 1
         
         serializer.save(sub=user_sub, message_id=next_message_id)
@@ -222,28 +223,38 @@ class MessageViewSet(viewsets.ModelViewSet):
         pass
 
     def retrieve(self, request, *args, **kwargs):
-        """Получаем сообщение по message_id вместо id"""
+        """Получаем сообщение по message_id в рамках конкретной беседы"""
         user_sub = getattr(request, 'user_id', None)
         if not user_sub:
             return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
         
         message_id = kwargs.get('pk')
+        conversation_id = request.query_params.get('conversationId')
+        
+        if not conversation_id:
+            return Response({"error": "conversationId parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
         try:
-            message = Message.objects.get(sub=user_sub, message_id=message_id)
+            message = Message.objects.get(sub=user_sub, message_id=message_id, conversation_id=conversation_id)
             serializer = self.get_serializer(message)
             return Response(serializer.data)
         except Message.DoesNotExist:
             return Response({"error": "Message not found"}, status=status.HTTP_404_NOT_FOUND)
 
     def update(self, request, *args, **kwargs):
-        """Обновляем сообщение по message_id вместо id"""
+        """Обновляем сообщение по message_id в рамках конкретной беседы"""
         user_sub = getattr(request, 'user_id', None)
         if not user_sub:
             return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
         
         message_id = kwargs.get('pk')
+        conversation_id = request.query_params.get('conversationId')
+        
+        if not conversation_id:
+            return Response({"error": "conversationId parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
         try:
-            message = Message.objects.get(sub=user_sub, message_id=message_id)
+            message = Message.objects.get(sub=user_sub, message_id=message_id, conversation_id=conversation_id)
             serializer = self.get_serializer(message, data=request.data, partial=kwargs.get('partial', False))
             serializer.is_valid(raise_exception=True)
             serializer.save()
@@ -252,14 +263,19 @@ class MessageViewSet(viewsets.ModelViewSet):
             return Response({"error": "Message not found"}, status=status.HTTP_404_NOT_FOUND)
 
     def destroy(self, request, *args, **kwargs):
-        """Удаляем сообщение по message_id вместо id"""
+        """Удаляем сообщение по message_id в рамках конкретной беседы"""
         user_sub = getattr(request, 'user_id', None)
         if not user_sub:
             return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
         
         message_id = kwargs.get('pk')
+        conversation_id = request.query_params.get('conversationId')
+        
+        if not conversation_id:
+            return Response({"error": "conversationId parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
         try:
-            message = Message.objects.get(sub=user_sub, message_id=message_id)
+            message = Message.objects.get(sub=user_sub, message_id=message_id, conversation_id=conversation_id)
             message.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
         except Message.DoesNotExist:
@@ -282,7 +298,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             Conversation.objects.get(sub=user_sub, conversation_id=conversation_id)
             
             # Удаляем все сообщения этой беседы
-            deleted_count = Message.objects.filter(sub=user_sub, conversation=conversation_id).delete()[0]
+            deleted_count = Message.objects.filter(sub=user_sub, conversation_id=conversation_id).delete()[0]
             
             return Response({
                 "deleted": True,

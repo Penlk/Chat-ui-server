@@ -59,7 +59,7 @@ class Message(models.Model):
     """
     id = models.AutoField(primary_key=True)
     sub = models.CharField(max_length=36, db_index=True, help_text="Уникальный идентификатор пользователя из JWT токена")
-    conversation = models.IntegerField(help_text="Порядковый номер беседы для пользователя (conversation_id)")
+    conversation_id = models.IntegerField(help_text="Порядковый номер беседы для пользователя")
     message_id = models.IntegerField(default=0, help_text="Порядковый номер сообщения для пользователя")
     message = models.TextField(help_text="Текст сообщения")
     is_bot = models.BooleanField(default=False, help_text="Сообщение от бота")
@@ -73,8 +73,8 @@ class Message(models.Model):
         db_table = 'messages'
         indexes = [
             models.Index(fields=['sub', 'created_at']),
-            models.Index(fields=['sub', 'conversation']),
-            models.Index(fields=['conversation', 'created_at']),
+            models.Index(fields=['sub', 'conversation_id']),
+            models.Index(fields=['conversation_id', 'created_at']),
             models.Index(fields=['sub', 'message_id']),
         ]
 
