@@ -242,17 +242,34 @@ class ChatKafkaConsumerService:
             
             logger.info(f"🌐 Making request to {url}")
             
-            async with aiohttp.ClientSession() as session:
+            # Создаем сессию с таймаутом
+            timeout = aiohttp.ClientTimeout(total=120)  # 2 минуты на весь запрос
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, json=data, headers=headers) as response:
                     if response.status == 200:
                         logger.info(f"✅ Received SSE response from conversation_cloud")
                         
-                        # Читаем содержимое сразу, пока соединение открыто
+                        # Читаем содержимое с таймаутом
                         try:
-                            sse_content = await response.text()
-                            logger.info(f"📋 Полный ответ от LLM:")
-                            logger.info(f"📋 {sse_content}")
+                            # Читаем ответ по частям, чтобы избежать зависания
+                            sse_content = ""
+                            async for line in response.content:
+                                line_str = line.decode('utf-8').strip()
+                                if line_str:
+                                    sse_content += line_str + "\n"
+                                    logger.info(f"📋 Получена строка: {line_str[:100]}...")
+                                
+                                # Проверяем, завершился ли ответ
+                                if "event: done" in line_str:
+                                    logger.info(f"✅ Получен сигнал завершения")
+                                    break
+                            
+                            logger.info(f"📋 Полный ответ от LLM (длина: {len(sse_content)} символов)")
                             return {"content": sse_content, "response": response}
+                            
+                        except asyncio.TimeoutError:
+                            logger.error(f"💥 Timeout while reading SSE response")
+                            return None
                         except Exception as e:
                             logger.error(f"💥 Error reading response content: {e}")
                             return None
@@ -261,6 +278,9 @@ class ChatKafkaConsumerService:
                         logger.error(f"❌ Conversation_cloud error: {response.status} - {error_text}")
                         return None
                         
+        except asyncio.TimeoutError:
+            logger.error(f"💥 Timeout while making conversation request")
+            return None
         except Exception as e:
             logger.error(f"💥 Error making conversation request: {e}")
             return None
