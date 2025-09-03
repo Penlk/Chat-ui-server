@@ -31,13 +31,14 @@ class EmbeddingDocument(models.Model):
 class Conversation(models.Model):
     """
     Модель разговора, адаптированная под использование sub как уникального идентификатора пользователя.
-    Аналогично balance_transactions в Tarrification.
+    Теперь может быть связана с проектом.
     """
     id = models.AutoField(primary_key=True)
     sub = models.CharField(max_length=36, db_index=True, help_text="Уникальный идентификатор пользователя из JWT токена")
     org_id = models.CharField(max_length=36, null=True, blank=True, db_index=True, help_text="Идентификатор организации")
     conversation_id = models.IntegerField(default=0, help_text="Порядковый номер беседы для пользователя")
     topic = models.CharField(max_length=255, help_text="Тема разговора")
+    project = models.ForeignKey(Project, on_delete=models.SET_NULL, null=True, blank=True, related_name='conversations', help_text="Проект, к которому принадлежит разговор")
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -47,11 +48,11 @@ class Conversation(models.Model):
             models.Index(fields=['sub', 'created_at']),
             models.Index(fields=['sub', 'org_id']),
             models.Index(fields=['sub', 'conversation_id']),
+            models.Index(fields=['project', 'created_at']),  # Новый индекс для проектов
         ]
 
     def __str__(self):
         return f"Conversation {self.id} - {self.topic} (sub: {self.sub})"
-
 
 class Message(models.Model):
     """
@@ -140,3 +141,28 @@ class TokenUsage(models.Model):
 
     def __str__(self):
         return f"TokenUsage for {self.sub}: {self.tokens} tokens"
+
+class Project(models.Model):
+    """
+    Модель проекта, который может содержать группу чатов (conversations).
+    """
+    id = models.AutoField(primary_key=True)
+    sub = models.CharField(max_length=36, db_index=True, help_text="Уникальный идентификатор пользователя из JWT токена")
+    org_id = models.CharField(max_length=36, null=True, blank=True, db_index=True, help_text="Идентификатор организации")
+    project_id = models.IntegerField(default=0, help_text="Порядковый номер проекта для пользователя")
+    name = models.CharField(max_length=255, help_text="Название проекта")
+    description = models.TextField(blank=True, help_text="Описание проекта")
+    is_active = models.BooleanField(default=True, help_text="Активен ли проект")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'projects'
+        indexes = [
+            models.Index(fields=['sub', 'created_at']),
+            models.Index(fields=['sub', 'org_id']),
+            models.Index(fields=['sub', 'project_id']),
+        ]
+
+    def __str__(self):
+        return f"Project {self.id} - {self.name} (sub: {self.sub})"
