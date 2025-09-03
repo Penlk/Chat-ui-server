@@ -38,3 +38,14 @@ class SettingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Setting
         fields = ('name', 'value')
+
+class ProjectSerializer(serializers.ModelSerializer):
+    conversations_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Project
+        fields = ['id', 'sub', 'org_id', 'project_id', 'name', 'description', 'is_active', 'conversations_count', 'created_at', 'updated_at']
+        read_only_fields = ('sub', 'org_id', 'project_id')
+    
+    def get_conversations_count(self, obj):
+        return obj.conversations.count()

@@ -17,7 +17,7 @@ import logging
 
 from provider.models import ApiKey
 from stats.models import TokenUsage
-from .models import Conversation, Message, EmbeddingDocument, Setting, Prompt
+from .models import Conversation, Message, EmbeddingDocument, Setting, Prompt, Project
 from django.conf import settings
 from django.http import StreamingHttpResponse
 from django.forms.models import model_to_dict
@@ -30,7 +30,7 @@ except Exception:
     JWTAuthentication = None
 from rest_framework.decorators import api_view, authentication_classes, permission_classes, action
 from rest_framework.exceptions import ValidationError
-from .serializers import ConversationSerializer, MessageSerializer, PromptSerializer, EmbeddingDocumentSerializer, SettingSerializer
+from .serializers import ConversationSerializer, MessageSerializer, PromptSerializer, EmbeddingDocumentSerializer, SettingSerializer, ProjectSerializer
 from utils.search_prompt import compile_prompt
 from utils.duckduckgo_search import web_search, SearchRequest
 from .tools import TOOL_LIST
@@ -1386,3 +1386,111 @@ def get_openai(openai_api_key):
         openai.api_base = proxy
         logger.info('get_openai: set api_base = %s', openai.api_base)
     return openai
+
+
+class ProjectViewSet(viewsets.ModelViewSet):
+    serializer_class = ProjectSerializer
+    # authentication_classes = [JWTAuthentication]
+    # permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user_sub = getattr(self.request, 'user_id', None)
+        active_org_id = getattr(self.request, 'active_org_id', None)
+        queryset = Project.objects.none()
+        if user_sub:
+            queryset = Project.objects.filter(sub=user_sub)
+            if active_org_id:
+                queryset = queryset.filter(org_id=active_org_id)
+            queryset = queryset.order_by('-created_at')
+        return queryset
+
+    def create(self, request, *args, **kwargs):
+        user_sub = getattr(request, 'user_id', None)
+        if not user_sub:
+            return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        # Получаем следующий project_id для пользователя
+        last_project = Project.objects.filter(sub=user_sub).order_by('-project_id').first()
+        next_project_id = 1 if not last_project else last_project.project_id + 1
+        
+        serializer.save(
+            sub=user_sub, 
+            org_id=getattr(request, 'active_org_id', None),
+            project_id=next_project_id
+        )
+        
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    def destroy(self, request, *args, **kwargs):
+        """Удаление проекта и всех связанных чатов"""
+        project = self.get_object()
+        
+        # Получаем все чаты, связанные с проектом
+        related_conversations = project.conversations.all()
+        
+        # Удаляем все связанные чаты
+        for conversation in related_conversations:
+            # Удаляем все сообщения в чате
+            Message.objects.filter(conversation_id=conversation.conversation_id, sub=conversation.sub).delete()
+            
+            # Удаляем сам чат
+            conversation.delete()
+        
+        # Логируем удаление
+        logger.info(f"Deleting project {project.id} - {project.name} for user {project.sub} with {related_conversations.count()} conversations")
+        
+        # Удаляем проект
+        project.delete()
+        
+        return Response({
+            "message": f"Project and {related_conversations.count()} conversations deleted successfully"
+        }, status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['get'], url_path='conversations')
+    def get_conversations(self, request, pk=None):
+        """Получить все чаты проекта"""
+        project = self.get_object()
+        conversations = project.conversations.all().order_by('-created_at')
+        serializer = ConversationSerializer(conversations, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='add-conversation')
+    def add_conversation(self, request, pk=None):
+        """Добавить существующий чат в проект"""
+        project = self.get_object()
+        conversation_id = request.data.get('conversation_id')
+        
+        if not conversation_id:
+            return Response({"error": "conversation_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            conversation = Conversation.objects.get(id=conversation_id, sub=request.user_id)
+        except Conversation.DoesNotExist:
+            return Response({"error": "Conversation not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Привязываем разговор к проекту
+        conversation.project = project
+        conversation.save()
+        
+        return Response({"message": "Conversation added to project"}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['delete'], url_path='remove-conversation')
+    def remove_conversation(self, request, pk=None):
+        """Удалить чат из проекта"""
+        project = self.get_object()
+        conversation_id = request.data.get('conversation_id')
+        
+        if not conversation_id:
+            return Response({"error": "conversation_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            conversation = Conversation.objects.get(id=conversation_id, project=project)
+            conversation.project = None
+            conversation.save()
+            return Response({"message": "Conversation removed from project"}, status=status.HTTP_200_OK)
+        except Conversation.DoesNotExist:
+            return Response({"error": "Conversation not in project"}, status=status.HTTP_404_NOT_FOUND)
