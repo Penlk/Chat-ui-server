@@ -1494,3 +1494,197 @@ class ProjectViewSet(viewsets.ModelViewSet):
             return Response({"message": "Conversation removed from project"}, status=status.HTTP_200_OK)
         except Conversation.DoesNotExist:
             return Response({"error": "Conversation not in project"}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['post'], url_path='move-conversation')
+    def move_conversation(self, request, pk=None):
+        """
+        Переместить чат между проектами или добавить в проект
+        
+        Параметры:
+        - conversation_id: ID чата для перемещения
+        - target_project_id: ID целевого проекта (опционально, если None - убираем из всех проектов)
+        - source_project_id: ID исходного проекта (опционально, для валидации)
+        """
+        user_sub = getattr(request, 'user_id', None)
+        if not user_sub:
+            return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        conversation_id = request.data.get('conversation_id')
+        target_project_id = request.data.get('target_project_id')
+        source_project_id = request.data.get('source_project_id')
+        
+        if not conversation_id:
+            return Response({"error": "conversation_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Получаем чат, принадлежащий пользователю
+            conversation = Conversation.objects.get(
+                conversation_id=conversation_id, 
+                sub=user_sub
+            )
+        except Conversation.DoesNotExist:
+            return Response({"error": "Conversation not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Валидация исходного проекта (если указан)
+        if source_project_id:
+            try:
+                source_project = Project.objects.get(
+                    project_id=source_project_id,
+                    sub=user_sub
+                )
+                if conversation.project != source_project:
+                    return Response({
+                        "error": "Conversation is not in the specified source project"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            except Project.DoesNotExist:
+                return Response({"error": "Source project not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Определяем целевой проект
+        target_project = None
+        if target_project_id:
+            try:
+                target_project = Project.objects.get(
+                    project_id=target_project_id,
+                    sub=user_sub
+                )
+            except Project.DoesNotExist:
+                return Response({"error": "Target project not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Проверяем, что чат не перемещается в тот же проект
+        if conversation.project == target_project:
+            return Response({
+                "message": "Conversation is already in the target project",
+                "conversation_id": conversation_id,
+                "project_id": target_project_id
+            }, status=status.HTTP_200_OK)
+        
+        # Выполняем перемещение
+        old_project_id = conversation.project.project_id if conversation.project else None
+        conversation.project = target_project
+        conversation.save()
+        
+        # Формируем ответ
+        response_data = {
+            "message": "Conversation moved successfully",
+            "conversation_id": conversation_id,
+            "old_project_id": old_project_id,
+            "new_project_id": target_project_id
+        }
+        
+        # Логируем операцию
+        logger.info(
+            f"User {user_sub} moved conversation {conversation_id} from project {old_project_id} to project {target_project_id}"
+        )
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='move-conversations')
+    def move_conversations(self, request, pk=None):
+        """
+        Массовое перемещение чатов между проектами
+        
+        Параметры:
+        - conversation_ids: список ID чатов для перемещения
+        - target_project_id: ID целевого проекта (опционально, если None - убираем из всех проектов)
+        - source_project_id: ID исходного проекта (опционально, для валидации)
+        """
+        user_sub = getattr(request, 'user_id', None)
+        if not user_sub:
+            return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        conversation_ids = request.data.get('conversation_ids', [])
+        target_project_id = request.data.get('target_project_id')
+        source_project_id = request.data.get('source_project_id')
+        
+        if not conversation_ids:
+            return Response({"error": "conversation_ids is required and must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not isinstance(conversation_ids, list):
+            return Response({"error": "conversation_ids must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Определяем целевой проект
+        target_project = None
+        if target_project_id:
+            try:
+                target_project = Project.objects.get(
+                    project_id=target_project_id,
+                    sub=user_sub
+                )
+            except Project.DoesNotExist:
+                return Response({"error": "Target project not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Валидация исходного проекта (если указан)
+        source_project = None
+        if source_project_id:
+            try:
+                source_project = Project.objects.get(
+                    project_id=source_project_id,
+                    sub=user_sub
+                )
+            except Project.DoesNotExist:
+                return Response({"error": "Source project not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        moved_conversations = []
+        errors = []
+        
+        for conversation_id in conversation_ids:
+            try:
+                # Получаем чат, принадлежащий пользователю
+                conversation = Conversation.objects.get(
+                    conversation_id=conversation_id, 
+                    sub=user_sub
+                )
+                
+                # Валидация исходного проекта (если указан)
+                if source_project and conversation.project != source_project:
+                    errors.append({
+                        "conversation_id": conversation_id,
+                        "error": "Conversation is not in the specified source project"
+                    })
+                    continue
+                
+                # Проверяем, что чат не перемещается в тот же проект
+                if conversation.project == target_project:
+                    moved_conversations.append({
+                        "conversation_id": conversation_id,
+                        "status": "already_in_target",
+                        "old_project_id": conversation.project.project_id if conversation.project else None,
+                        "new_project_id": target_project_id
+                    })
+                    continue
+                
+                # Выполняем перемещение
+                old_project_id = conversation.project.project_id if conversation.project else None
+                conversation.project = target_project
+                conversation.save()
+                
+                moved_conversations.append({
+                    "conversation_id": conversation_id,
+                    "status": "moved",
+                    "old_project_id": old_project_id,
+                    "new_project_id": target_project_id
+                })
+                
+            except Conversation.DoesNotExist:
+                errors.append({
+                    "conversation_id": conversation_id,
+                    "error": "Conversation not found"
+                })
+        
+        # Формируем ответ
+        response_data = {
+            "message": f"Processed {len(conversation_ids)} conversations",
+            "moved_count": len([c for c in moved_conversations if c["status"] == "moved"]),
+            "already_in_target_count": len([c for c in moved_conversations if c["status"] == "already_in_target"]),
+            "error_count": len(errors),
+            "moved_conversations": moved_conversations,
+            "errors": errors
+        }
+        
+        # Логируем операцию
+        logger.info(
+            f"User {user_sub} moved {len(moved_conversations)} conversations to project {target_project_id}. "
+            f"Errors: {len(errors)}"
+        )
+        
+        return Response(response_data, status=status.HTTP_200_OK)
