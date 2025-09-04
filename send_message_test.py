@@ -6,8 +6,8 @@ import requests
 import json
 
 def send_message():
-    # URL Gateway
-    url = "http://localhost:8002/api/chat/messages/"
+    # URL для отправки сообщения (напрямую к Chat Service)
+    url = "http://localhost:8003/api/chat/messages/"
     
     # JWT токен
     token = "eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJVaGtKejZ2TlREWEpnQnoxdGJjSXhjLVc2U0V2NERpQVZVOHFhTGZrckZZIn0.eyJleHAiOjE3NTY3Mjc2NjYsImlhdCI6MTc1NjcyNzM2NiwianRpIjoib25ydHJvOmU0ZmRjYjgxLWE3ZDgtY2MxYS02OWQxLTE0Yjg0MzRlYTk3OCIsImlzcyI6Imh0dHA6Ly9rZXljbG9hazo4MDgwL3JlYWxtcy9hdXRoLXNlcnZpY2UiLCJhdWQiOiJhY2NvdW50Iiwic3ViIjoiZWFmNTVhZjktMDQ2Ny00NGRjLThmMTMtOGFmNjg5Yjk3YTA5IiwidHlwIjoiQmVhcmVyIiwiYXpwIjoiYXV0aC1zZXJ2aWNlIiwic2lkIjoiZDI0YmM3YmYtMmRlMC00ZDc2LWE3MGUtZjRkYjFlOGI0ZjZmIiwiYWNyIjoiMSIsImFsbG93ZWQtb3JpZ2lucyI6WyIgaHR0cDovLzEyNy4wLjAuMTo4MDA5Il0sInJlYWxtX2FjY2VzcyI6eyJyb2xlcyI6WyJkZWZhdWx0LXJvbGVzLWF1dGgtc2VydmljZSIsIm9mZmxpbmVfYWNjZXNzIiwidW1hX2F1dGhvcml6YXRpb24iXX0sInJlc291cmNlX2FjY2VzcyI6eyJhY2NvdW50Ijp7InJvbGVzIjpbIm1hbmFnZS1hY2NvdW50IiwibWFuYWdlLWFjY291bnQtbGlua3MiLCJ2aWV3LXByb2ZpbGUiXX19LCJzY29wZSI6InByb2ZpbGUgZW1haWwiLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwibmFtZSI6IlRlc3QyIEFjY291bnQiLCJwcmVmZXJyZWRfdXNlcm5hbWUiOiJ0ZXN0MkBleGFtcGxlLmNvbSIsImdpdmVuX25hbWUiOiJUZXN0MiIsImZhbWlseV9uYW1lIjoiQWNjb3VudCIsImVtYWlsIjoidGVzdDJAZXhhbXBsZS5jb20ifQ.m6o9geUGyW8WRYqsJc8Yb5VHTjyiCUiVJROox2wMlEyJ6EhbABFCe_UVBLXK8FszxQtjVQGsfAlocK3unNbuTD9X8OD4HDJLZvtfBkkqiyLWDN88cbUdmVKkzR3FXzBqKaamJjRaBhyi1CWXhcouKoKFbfkYUqvFgehui_uhMYL0JTjRcg5t274kB4bXLGfywq670IowQRXZfgKcOgSiwKGxsl9AnJjzraeBv_S6wyRXFX9JM0EXS1g3-uH5Z7Zuf09iHdGPGh-7nhI6A6C8Op3ovCAWd20a1Sa7g4m9oe9-UCpMSjau5Kit0oa8LU3_ESulziDrQljQskwQgVGObw"
@@ -18,10 +18,10 @@ def send_message():
         "Content-Type": "application/json"
     }
     
-    # Данные сообщения - тестируем исправление таймаута
+    # Данные сообщения - тестируем сигналы Django
     data = {
-        "conversation": 8,  # ID беседы, которая теперь работает
-        "message": "🔧 ТЕСТ ИСПРАВЛЕНИЯ ТАЙМАУТА: Расскажи мне коротко о технологиях будущего (максимум 100 слов)",
+        "conversation": 8,  # Используем беседу ID 8
+        "message": "🔔 ТЕСТ СИГНАЛОВ DJANGO: Расскажи мне коротко о технологиях будущего (максимум 100 слов)",
         "is_bot": False,
         "message_type": 0
     }

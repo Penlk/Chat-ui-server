@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Конфигурация Kafka
 KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', "kafka:29092")
-KAFKA_GROUP_ID = "chat-service-consumers"
+KAFKA_GROUP_ID = "chat-service-consumers-final"
 KAFKA_TOPIC = "chat-ui-messages"
 
 class MessageCollector:
@@ -110,15 +110,20 @@ class ChatKafkaConsumerService:
                     break
                     
                 try:
-                    # Получаем фрагмент сообщения
-                    fragment = message.value
-                    logger.info(f"📬 Received fragment: {fragment[:100]}...")
+                    # Получаем полное сообщение
+                    message_str = message.value
+                    logger.info(f"📬 Received message: {message_str}")
                     
-                    # Пытаемся собрать полное сообщение
-                    full_message = self.message_collector.add_fragment(fragment)
-                    
-                    if full_message:
-                        await self._process_message_data(full_message)
+                    # Парсим JSON
+                    try:
+                        message_data = json.loads(message_str)
+                        logger.info(f"📊 Parsed message data: {message_data}")
+                        
+                        # Обрабатываем сообщение
+                        await self._process_message_data(message_data)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"❌ Failed to parse JSON: {e}")
+                        logger.error(f"❌ Raw message: {message_str}")
                         
                 except Exception as e:
                     logger.error(f"❌ Error processing message: {e}")
@@ -181,14 +186,18 @@ class ChatKafkaConsumerService:
             logger.error(f"💥 Full traceback: {traceback.format_exc()}")
     
     async def _call_conversation_cloud(self, message_id, conversation_id, message, user_context, request_id):
-        """Вызов api/conversation_cloud для streaming"""
+        """Прямой вызов Cloud.ru API для streaming"""
         try:
-            logger.info(f"🔧 Starting _call_conversation_cloud for message {message_id}")
+            logger.info(f"🔧 Starting direct Cloud.ru API call for message {message_id}")
             
-            # Формируем запрос к api/conversation_cloud
-            conversation_data = {
-                "name": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
-                "message": [
+            # Данные для запроса к Cloud.ru API
+            cloud_data = {
+                "model": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a helpful assistant."
+                    },
                     {
                         "role": "user",
                         "content": message
@@ -199,18 +208,21 @@ class ChatKafkaConsumerService:
                 "max_tokens": 300,
                 "frequency_penalty": 0.5,
                 "presence_penalty": 0.3,
-                "openaiApiKey": "YzU1MGExYWYtODhiYy00MWE1LWIzMjAtMWMxMGYxN2IzZGVh.bbf892ff8b0054533d307ed3ba2ffae5"
+                "stream": True
             }
             
-            logger.info(f"📡 Calling api/conversation_cloud for message {message_id}")
-            logger.info(f"📤 Request data: {conversation_data}")
+            # API ключ для Cloud.ru
+            api_key = "YzU1MGExYWYtODhiYy00MWE1LWIzMjAtMWMxMGYxN2IzZGVh.bbf892ff8b0054533d307ed3ba2ffae5"
             
-            # Выполняем запрос к api/conversation_cloud
-            logger.info(f"🌐 Making HTTP request to conversation_cloud...")
-            response = await self._make_conversation_request(conversation_data)
+            logger.info(f"📡 Calling Cloud.ru API directly for message {message_id}")
+            logger.info(f"📤 Request data: {cloud_data}")
+            
+            # Выполняем прямой запрос к Cloud.ru API
+            logger.info(f"🌐 Making direct request to Cloud.ru API...")
+            response = await self._make_cloud_api_request(cloud_data, api_key)
             
             if response:
-                logger.info(f"✅ Got response from conversation_cloud with content")
+                logger.info(f"✅ Got response from Cloud.ru API")
                 sse_content = response.get("content", "")
                 
                 if sse_content:
@@ -219,7 +231,7 @@ class ChatKafkaConsumerService:
                 else:
                     logger.warning(f"⚠️ No content in response")
             else:
-                logger.warning(f"⚠️ No response from conversation_cloud")
+                logger.warning(f"⚠️ No response from Cloud.ru API")
             
             logger.info(f"✅ AI processing completed for message {message_id}")
             logger.info(f"   - Request ID: {request_id}")
@@ -227,27 +239,29 @@ class ChatKafkaConsumerService:
             logger.info(f"   - User: {user_context.get('email')}")
             
         except Exception as e:
-            logger.error(f"💥 Error calling conversation_cloud: {e}")
+            logger.error(f"💥 Error calling Cloud.ru API: {e}")
             import traceback
             logger.error(f"💥 Full traceback: {traceback.format_exc()}")
     
 
-    async def _make_conversation_request(self, data):
-        """Выполнение HTTP запроса к api/conversation_cloud"""
+    async def _make_cloud_api_request(self, data, api_key):
+        """Прямой запрос к Cloud.ru API"""
         try:
-            url = "http://wsgi-server:8010/api/conversation_cloud/"
+            url = "https://foundation-models.api.cloud.ru/v1/chat/completions"
             headers = {
+                'Authorization': f'Bearer {api_key}',
                 'Content-Type': 'application/json'
             }
             
-            logger.info(f"🌐 Making request to {url}")
+            logger.info(f"🌐 Making direct request to Cloud.ru API: {url}")
+            logger.info(f"📤 Headers: {dict(headers)}")
             
             # Создаем сессию с таймаутом
             timeout = aiohttp.ClientTimeout(total=120)  # 2 минуты на весь запрос
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, json=data, headers=headers) as response:
                     if response.status == 200:
-                        logger.info(f"✅ Received SSE response from conversation_cloud")
+                        logger.info(f"✅ Received SSE response from Cloud.ru API")
                         
                         # Читаем содержимое с таймаутом
                         try:
@@ -260,11 +274,11 @@ class ChatKafkaConsumerService:
                                     logger.info(f"📋 Получена строка: {line_str[:100]}...")
                                 
                                 # Проверяем, завершился ли ответ
-                                if "event: done" in line_str:
+                                if "event: done" in line_str or "[DONE]" in line_str:
                                     logger.info(f"✅ Получен сигнал завершения")
                                     break
                             
-                            logger.info(f"📋 Полный ответ от LLM (длина: {len(sse_content)} символов)")
+                            logger.info(f"📋 Полный ответ от Cloud.ru API (длина: {len(sse_content)} символов)")
                             return {"content": sse_content, "response": response}
                             
                         except asyncio.TimeoutError:
@@ -275,14 +289,14 @@ class ChatKafkaConsumerService:
                             return None
                     else:
                         error_text = await response.text()
-                        logger.error(f"❌ Conversation_cloud error: {response.status} - {error_text}")
+                        logger.error(f"❌ Cloud.ru API error: {response.status} - {error_text}")
                         return None
                         
         except asyncio.TimeoutError:
-            logger.error(f"💥 Timeout while making conversation request")
+            logger.error(f"💥 Timeout while making Cloud.ru API request")
             return None
         except Exception as e:
-            logger.error(f"💥 Error making conversation request: {e}")
+            logger.error(f"💥 Error making Cloud.ru API request: {e}")
             return None
     
     async def _stream_to_frontend(self, sse_content, message_id, request_id):

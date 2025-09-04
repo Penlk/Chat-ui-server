@@ -214,7 +214,52 @@ class MessageViewSet(viewsets.ModelViewSet):
         last_message = Message.objects.filter(sub=user_sub, conversation_id=conversation_id).order_by('-message_id').first()
         next_message_id = 1 if not last_message else last_message.message_id + 1
         
-        serializer.save(sub=user_sub, message_id=next_message_id)
+        # Сохраняем сообщение
+        message_instance = serializer.save(sub=user_sub, message_id=next_message_id)
+        
+        # Логируем создание сообщения
+        logger.info(f"📬 Сообщение {message_instance.id} сохранено в БД")
+        
+        # Проверяем, что это сообщение от пользователя (не от бота)
+        if not message_instance.is_bot:
+            logger.info(f"🚀 Отправляем сообщение {message_instance.id} в Kafka для обработки LLM")
+            
+            # Формируем сообщение для Kafka
+            kafka_message = {
+                "operation": "start_stream",
+                "request_id": str(message_instance.id),
+                "payload": {
+                    "saved_message_id": message_instance.id,
+                    "conversation_id": message_instance.conversation_id,
+                    "message": message_instance.message,
+                    "user_context": {
+                        "email": f"user_{message_instance.sub[:8]}@example.com",
+                        "sub": message_instance.sub
+                    }
+                }
+            }
+            
+            logger.info(f"📤 Kafka сообщение: {json.dumps(kafka_message, indent=2)}")
+            
+            # Отправляем сообщение в Kafka
+            try:
+                from .kafka_service import kafka_service
+                import asyncio
+                
+                # Создаем задачу для отправки в Kafka
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(kafka_service.send_message(
+                    topic="chat-ui-messages",
+                    message=kafka_message,
+                    key=str(message_instance.id)
+                ))
+                loop.close()
+                
+                logger.info(f"✅ Сообщение {message_instance.id} отправлено в Kafka")
+            except Exception as e:
+                logger.error(f"❌ Ошибка отправки в Kafka: {e}")
+            
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
