@@ -1425,9 +1425,47 @@ class ProjectViewSet(viewsets.ModelViewSet):
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
+    def retrieve(self, request, *args, **kwargs):
+        """Получаем проект по project_id вместо id"""
+        user_sub = getattr(request, 'user_id', None)
+        if not user_sub:
+            return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        project_id = kwargs.get('pk')
+        try:
+            project = Project.objects.get(sub=user_sub, project_id=project_id)
+            serializer = self.get_serializer(project)
+            return Response(serializer.data)
+        except Project.DoesNotExist:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    def update(self, request, *args, **kwargs):
+        """Обновляем проект по project_id вместо id"""
+        user_sub = getattr(request, 'user_id', None)
+        if not user_sub:
+            return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        project_id = kwargs.get('pk')
+        try:
+            project = Project.objects.get(sub=user_sub, project_id=project_id)
+            serializer = self.get_serializer(project, data=request.data, partial=kwargs.get('partial', False))
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data)
+        except Project.DoesNotExist:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
     def destroy(self, request, *args, **kwargs):
         """Удаление проекта и всех связанных чатов"""
-        project = self.get_object()
+        user_sub = getattr(request, 'user_id', None)
+        if not user_sub:
+            return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        project_id = kwargs.get('pk')
+        try:
+            project = Project.objects.get(sub=user_sub, project_id=project_id)
+        except Project.DoesNotExist:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
         
         # Получаем все чаты, связанные с проектом
         related_conversations = project.conversations.all()
@@ -1453,7 +1491,16 @@ class ProjectViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='conversations')
     def get_conversations(self, request, pk=None):
         """Получить все чаты проекта"""
-        project = self.get_object()
+        user_sub = getattr(request, 'user_id', None)
+        if not user_sub:
+            return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        
+        project_id = pk
+        try:
+            project = Project.objects.get(sub=user_sub, project_id=project_id)
+        except Project.DoesNotExist:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        
         conversations = project.conversations.all().order_by('-created_at')
         serializer = ConversationSerializer(conversations, many=True)
         return Response(serializer.data)
@@ -1461,14 +1508,22 @@ class ProjectViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='add-conversation')
     def add_conversation(self, request, pk=None):
         """Добавить существующий чат в проект"""
-        project = self.get_object()
-        conversation_id = request.data.get('conversation_id')
+        user_sub = getattr(request, 'user_id', None)
+        if not user_sub:
+            return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
         
+        project_id = pk
+        try:
+            project = Project.objects.get(sub=user_sub, project_id=project_id)
+        except Project.DoesNotExist:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        conversation_id = request.data.get('conversation_id')
         if not conversation_id:
             return Response({"error": "conversation_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            conversation = Conversation.objects.get(id=conversation_id, sub=request.user_id)
+            conversation = Conversation.objects.get(conversation_id=conversation_id, sub=user_sub)
         except Conversation.DoesNotExist:
             return Response({"error": "Conversation not found"}, status=status.HTTP_404_NOT_FOUND)
         
@@ -1481,14 +1536,22 @@ class ProjectViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['delete'], url_path='remove-conversation')
     def remove_conversation(self, request, pk=None):
         """Удалить чат из проекта"""
-        project = self.get_object()
-        conversation_id = request.data.get('conversation_id')
+        user_sub = getattr(request, 'user_id', None)
+        if not user_sub:
+            return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
         
+        project_id = pk
+        try:
+            project = Project.objects.get(sub=user_sub, project_id=project_id)
+        except Project.DoesNotExist:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        conversation_id = request.data.get('conversation_id')
         if not conversation_id:
             return Response({"error": "conversation_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            conversation = Conversation.objects.get(id=conversation_id, project=project)
+            conversation = Conversation.objects.get(conversation_id=conversation_id, project=project, sub=user_sub)
             conversation.project = None
             conversation.save()
             return Response({"message": "Conversation removed from project"}, status=status.HTTP_200_OK)
@@ -1503,7 +1566,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
         Параметры:
         - conversation_id: ID чата для перемещения
         - target_project_id: ID целевого проекта (опционально, если None - убираем из всех проектов)
-        - source_project_id: ID исходного проекта (опционально, для валидации)
         """
         user_sub = getattr(request, 'user_id', None)
         if not user_sub:
@@ -1524,20 +1586,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
             )
         except Conversation.DoesNotExist:
             return Response({"error": "Conversation not found"}, status=status.HTTP_404_NOT_FOUND)
-        
-        # Валидация исходного проекта (если указан)
-        if source_project_id:
-            try:
-                source_project = Project.objects.get(
-                    project_id=source_project_id,
-                    sub=user_sub
-                )
-                if conversation.project != source_project:
-                    return Response({
-                        "error": "Conversation is not in the specified source project"
-                    }, status=status.HTTP_400_BAD_REQUEST)
-            except Project.DoesNotExist:
-                return Response({"error": "Source project not found"}, status=status.HTTP_404_NOT_FOUND)
         
         # Определяем целевой проект
         target_project = None
@@ -1586,7 +1634,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
         Параметры:
         - conversation_ids: список ID чатов для перемещения
         - target_project_id: ID целевого проекта (опционально, если None - убираем из всех проектов)
-        - source_project_id: ID исходного проекта (опционально, для валидации)
         """
         user_sub = getattr(request, 'user_id', None)
         if not user_sub:
@@ -1634,14 +1681,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     conversation_id=conversation_id, 
                     sub=user_sub
                 )
-                
-                # Валидация исходного проекта (если указан)
-                if source_project and conversation.project != source_project:
-                    errors.append({
-                        "conversation_id": conversation_id,
-                        "error": "Conversation is not in the specified source project"
-                    })
-                    continue
                 
                 # Проверяем, что чат не перемещается в тот же проект
                 if conversation.project == target_project:
