@@ -233,6 +233,7 @@ class MessageViewSet(viewsets.ModelViewSet):
                     "saved_message_id": message_instance.id,
                     "conversation_id": message_instance.conversation_id,
                     "message": message_instance.message,
+                    "message_id": message_instance.message_id,
                     "user_context": {
                         "email": f"user_{message_instance.sub[:8]}@example.com" if message_instance.sub else "unknown@example.com",
                         "sub": message_instance.sub
