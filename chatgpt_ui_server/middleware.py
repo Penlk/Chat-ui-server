@@ -55,7 +55,7 @@ class UserIdMiddleware:
                     
                     # Декодируем JWT токен (без проверки подписи для демо)
                     jwt_payload = jwt.decode(token, options={"verify_signature": False})
-                    logger.info(f"🔍 Middleware: JWT payload получен")
+                    logger.info(f"🔍 Middleware: JWT payload получен: {jwt_payload}")
                     
                     # Извлекаем sub из JWT токена
                     sub = jwt_payload.get("sub")

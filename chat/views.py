@@ -179,6 +179,7 @@ class MessageViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         # Используем внешний sub из middleware
         user_sub = getattr(request, 'user_id', None)
+        logger.info(f"🔍 DEBUG MessageViewSet: user_sub = {user_sub}")
         if not user_sub:
             return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
         
@@ -233,7 +234,7 @@ class MessageViewSet(viewsets.ModelViewSet):
                     "conversation_id": message_instance.conversation_id,
                     "message": message_instance.message,
                     "user_context": {
-                        "email": f"user_{message_instance.sub[:8]}@example.com",
+                        "email": f"user_{message_instance.sub[:8]}@example.com" if message_instance.sub else "unknown@example.com",
                         "sub": message_instance.sub
                     }
                 }

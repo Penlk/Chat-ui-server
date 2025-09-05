@@ -10,6 +10,7 @@ import os
 from datetime import datetime
 from typing import Dict, Any
 import aiohttp
+import psycopg2
 
 # Настройка логирования
 logging.basicConfig(
@@ -161,10 +162,14 @@ class ChatKafkaConsumerService:
             message_text = payload.get('message')
             user_context = payload.get('user_context', {})
             user_email = user_context.get('email')
+            user_sub = user_context.get('sub', 'unknown')
+            user_message_id = payload.get('message_id', 1)
             
             logger.info(f"🤖 Starting AI processing for message {saved_message_id}")
             logger.info(f"   - Conversation ID: {conversation_id}")
             logger.info(f"   - User: {user_email}")
+            logger.info(f"   - User SUB: {user_sub}")
+            logger.info(f"   - User Message ID: {user_message_id}")
             logger.info(f"   - Message: {message_text[:50]}...")
             
             logger.info(f"📞 About to call _call_conversation_cloud...")
@@ -175,6 +180,8 @@ class ChatKafkaConsumerService:
                 conversation_id=conversation_id,
                 message=message_text,
                 user_context=user_context,
+                user_sub=user_sub,
+                user_message_id=user_message_id,
                 request_id=request_id
             )
             
@@ -185,7 +192,7 @@ class ChatKafkaConsumerService:
             import traceback
             logger.error(f"💥 Full traceback: {traceback.format_exc()}")
     
-    async def _call_conversation_cloud(self, message_id, conversation_id, message, user_context, request_id):
+    async def _call_conversation_cloud(self, message_id, conversation_id, message, user_context, user_sub, user_message_id, request_id):
         """Прямой вызов Cloud.ru API для streaming"""
         try:
             logger.info(f"🔧 Starting direct Cloud.ru API call for message {message_id}")
@@ -226,7 +233,19 @@ class ChatKafkaConsumerService:
                 sse_content = response.get("content", "")
                 
                 if sse_content:
-                    # Передаем содержимое на фронтенд (фронтенд сам решит, как сохранить)
+                    # Извлекаем текст ответа из SSE
+                    bot_response_text = self._extract_text_from_sse(sse_content)
+                    
+                    if bot_response_text:
+                        # Сохраняем сообщение бота в базу данных
+                        bot_message_id = self._save_bot_message(conversation_id, bot_response_text, user_sub, user_message_id + 1)
+                        
+                        if bot_message_id:
+                            logger.info(f"✅ Bot message saved with ID: {bot_message_id}")
+                        else:
+                            logger.error(f"❌ Failed to save bot message")
+                    
+                    # Передаем содержимое на фронтенд
                     await self._stream_to_frontend(sse_content, message_id, request_id)
                 else:
                     logger.warning(f"⚠️ No content in response")
@@ -342,6 +361,72 @@ class ChatKafkaConsumerService:
                         
         except Exception as e:
             logger.error(f"💥 Error streaming to frontend: {e}")
+    
+    def _save_bot_message(self, conversation_id, bot_response, user_sub, bot_message_id):
+        """Сохранение сообщения бота в базу данных"""
+        try:
+            logger.info(f"💾 Saving bot message to database...")
+            logger.info(f"   - Conversation ID: {conversation_id}")
+            logger.info(f"   - Response length: {len(bot_response)} characters")
+            
+            # Подключаемся к базе данных
+            conn = psycopg2.connect(
+                host='chat-service-postgres',
+                port=5432,
+                database='chat_service_db',
+                user='chat_service_user',
+                password='chat_service_password'
+            )
+            
+            cursor = conn.cursor()
+            
+            # Вставляем новое сообщение бота
+            cursor.execute("""
+                INSERT INTO messages (conversation_id, message, is_bot, message_type, sub, messages, tokens, message_id, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                RETURNING id
+            """, (conversation_id, bot_response, True, 0, user_sub, '[]', 0, bot_message_id))
+            
+            message_id = cursor.fetchone()[0]
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            logger.info(f"✅ Bot message saved successfully with ID: {message_id}")
+            return message_id
+            
+        except Exception as e:
+            logger.error(f"❌ Error saving bot message: {e}")
+            return None
+    
+    def _extract_text_from_sse(self, sse_content):
+        """Извлечение текста из SSE контента"""
+        try:
+            full_response = ""
+            lines = sse_content.strip().split('\n')
+            
+            for line in lines:
+                if line.startswith('data: '):
+                    try:
+                        json_str = line[6:]  # Убираем 'data: '
+                        data = json.loads(json_str)
+                        
+                        if 'choices' in data and len(data['choices']) > 0:
+                            choice = data['choices'][0]
+                            if 'delta' in choice:
+                                delta = choice['delta']
+                                if 'content' in delta:
+                                    full_response += delta['content']
+                                elif 'reasoning_content' in delta:
+                                    full_response += delta['reasoning_content']
+                    except json.JSONDecodeError:
+                        continue
+            
+            return full_response.strip()
+            
+        except Exception as e:
+            logger.error(f"❌ Error extracting text from SSE: {e}")
+            return ""
 
 async def main():
     """Основная функция"""
