@@ -40,7 +40,7 @@ async def send_message_to_kafka():
             "payload": {
                 "saved_message_id": 999,
                 "conversation_id": 8,
-                "message": "Тестовое сообщение для проверки Kafka Consumer",
+                "message": "Расскажи мне подробно о технологиях будущего, включая искусственный интеллект, квантовые вычисления, биотехнологии и нанотехнологии. Опиши как эти технологии могут изменить мир в ближайшие 20 лет.",
                 "user_context": {
                     "email": "test@example.com",
                     "sub": "test-user-123"

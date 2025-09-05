@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Конфигурация Kafka
 KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', "kafka:29092")
-KAFKA_GROUP_ID = "chat-service-consumers-final"
+KAFKA_GROUP_ID = "chat-service-consumers-test"
 KAFKA_TOPIC = "chat-ui-messages"
 
 class MessageCollector:
@@ -205,7 +205,7 @@ class ChatKafkaConsumerService:
                 ],
                 "temperature": 0.7,
                 "top_p": 0.9,
-                "max_tokens": 300,
+                "max_tokens": 2000,
                 "frequency_penalty": 0.5,
                 "presence_penalty": 0.3,
                 "stream": True
@@ -257,7 +257,7 @@ class ChatKafkaConsumerService:
             logger.info(f"📤 Headers: {dict(headers)}")
             
             # Создаем сессию с таймаутом
-            timeout = aiohttp.ClientTimeout(total=120)  # 2 минуты на весь запрос
+            timeout = aiohttp.ClientTimeout(total=300)  # 5 минут на весь запрос
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, json=data, headers=headers) as response:
                     if response.status == 200:
@@ -267,16 +267,33 @@ class ChatKafkaConsumerService:
                         try:
                             # Читаем ответ по частям, чтобы избежать зависания
                             sse_content = ""
+                            line_count = 0
+                            max_lines = 2000  # Максимум строк для предотвращения зависания
+                            
                             async for line in response.content:
                                 line_str = line.decode('utf-8').strip()
                                 if line_str:
                                     sse_content += line_str + "\n"
-                                    logger.info(f"📋 Получена строка: {line_str[:100]}...")
-                                
-                                # Проверяем, завершился ли ответ
-                                if "event: done" in line_str or "[DONE]" in line_str:
-                                    logger.info(f"✅ Получен сигнал завершения")
-                                    break
+                                    line_count += 1
+                                    
+                                    # Логируем каждую 10-ю строку для отслеживания прогресса
+                                    if line_count % 10 == 0:
+                                        logger.info(f"📋 Получено строк: {line_count}, текущая: {line_str[:100]}...")
+                                    
+                                    # Проверяем максимальное количество строк
+                                    if line_count >= max_lines:
+                                        logger.warning(f"⚠️ Достигнут лимит строк ({max_lines}), принудительно завершаем")
+                                        break
+                                    
+                                    # Проверяем, завершился ли ответ
+                                    if ("event: done" in line_str or 
+                                        "[DONE]" in line_str or 
+                                        '"finish_reason":"stop"' in line_str or
+                                        '"finish_reason":"length"' in line_str or
+                                        '"finish_reason":"end_turn"' in line_str):
+                                        logger.info(f"✅ Получен сигнал завершения: {line_str}")
+                                        logger.info(f"📊 Всего получено строк: {line_count}")
+                                        break
                             
                             logger.info(f"📋 Полный ответ от Cloud.ru API (длина: {len(sse_content)} символов)")
                             return {"content": sse_content, "response": response}
