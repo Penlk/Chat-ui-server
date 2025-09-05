@@ -5,7 +5,7 @@ from .models import Conversation, Message, Prompt, EmbeddingDocument, Setting
 class ConversationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Conversation
-        fields = ['id', 'sub', 'org_id', 'conversation_id', 'topic', 'created_at', 'updated_at']
+        fields = ['id', 'sub', 'org_id', 'conversation_id', 'topic', 'project', 'created_at', 'updated_at']
         read_only_fields = ('sub', 'org_id', 'conversation_id')
 
 class MessageSerializer(serializers.ModelSerializer):
@@ -39,13 +39,9 @@ class SettingSerializer(serializers.ModelSerializer):
         model = Setting
         fields = ('name', 'value')
 
+
 class ProjectSerializer(serializers.ModelSerializer):
-    conversations_count = serializers.SerializerMethodField()
-    
     class Meta:
         model = Project
-        fields = ['id', 'sub', 'org_id', 'project_id', 'name', 'description', 'is_active', 'conversations_count', 'created_at', 'updated_at']
+        fields = ['id', 'sub', 'org_id', 'project_id', 'name', 'description', 'is_active', 'created_at', 'updated_at']
         read_only_fields = ('sub', 'org_id', 'project_id')
-    
-    def get_conversations_count(self, obj):
-        return obj.conversations.count()
