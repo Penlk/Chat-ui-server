@@ -325,3 +325,27 @@ def fallback_get_conversations(request):
             {"error": "Internal error"}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['POST'])
+@csrf_exempt
+def stream_endpoint(request):
+    """
+    SSE endpoint для получения streaming данных от Kafka Consumer
+    Kafka Consumer отправляет сюда SSE данные, которые нужно передать на фронтенд
+    """
+    try:
+        # Получаем данные от Kafka Consumer
+        data = request.body.decode('utf-8')
+        logger.info(f"📥 Received SSE data from Kafka Consumer: {data[:100]}...")
+        
+        # Просто возвращаем 200 OK - данные уже отправлены на фронтенд
+        # Этот endpoint нужен только для того, чтобы Kafka Consumer мог отправить данные
+        return Response({"status": "received"}, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"❌ Stream endpoint error: {e}")
+        return Response(
+            {"error": "Stream error"}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

@@ -179,32 +179,178 @@ class ChatKafkaConsumerService:
             logger.error(f"💥 Error in _handle_start_stream: {e}")
     
     async def _call_conversation_cloud(self, message_id, conversation_id, message, user_context, request_id):
-        """Вызов api/conversation_cloud для streaming"""
+        """Вызов cloud.ru API для streaming"""
         try:
-            # Формируем запрос к api/conversation_cloud
-            conversation_data = {
-                'conversation_id': conversation_id,
-                'message': message,
-                'is_bot': False,
-                'message_type': 0,
-                'user_context': user_context,
-                'request_id': request_id
-            }
+            logger.info(f"📡 Calling cloud.ru API for message {message_id}")
             
-            logger.info(f"📡 Calling api/conversation_cloud for message {message_id}")
+            # Получаем API ключ из переменных окружения
+            openai_api_key = os.getenv('OPENAI_API_KEY')
+            if not openai_api_key:
+                logger.error("❌ OPENAI_API_KEY not found in environment variables")
+                return
             
-            # Здесь будет вызов api/conversation_cloud
-            # Пока что просто логируем
+            # Импортируем openai для streaming
+            import openai
+            
+            # Настраиваем OpenAI для cloud.ru
+            openai.api_key = openai_api_key
+            openai.api_base = "https://foundation-models.api.cloud.ru/v1"
+            
+            logger.info(f"🌐 Using cloud.ru API: {openai.api_base}")
+            
+            # Формируем сообщения для API
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": message}
+            ]
+            
+            # Вызываем cloud.ru API с streaming
+            logger.info(f"📡 Calling cloud.ru API with streaming...")
+            
+            response = openai.ChatCompletion.create(
+                model="deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+                messages=messages,
+                max_tokens=1000,
+                temperature=0.7,
+                top_p=0.95,
+                presence_penalty=0,
+                frequency_penalty=0,
+                stream=True
+            )
+            
+            # Собираем полный ответ и отправляем на фронтенд
+            full_response = ""
+            chunk_count = 0
+            
+            for chunk in response:
+                chunk_count += 1
+                
+                # Проверяем структуру chunk
+                if hasattr(chunk, 'choices') and chunk.choices:
+                    choice = chunk.choices[0]
+                    
+                    if hasattr(choice, 'delta') and choice.delta:
+                        delta = choice.delta
+                        
+                        # Обрабатываем reasoning_content (DeepSeek модель)
+                        if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                            content = delta.reasoning_content
+                            full_response += content
+                            
+                            # Отправляем chunk на фронтенд
+                            await self._send_chunk_to_frontend(content, request_id)
+                            
+                        # Обрабатываем content (стандартный OpenAI)
+                        elif hasattr(delta, 'content') and delta.content:
+                            content = delta.content
+                            full_response += content
+                            
+                            # Отправляем chunk на фронтенд
+                            await self._send_chunk_to_frontend(content, request_id)
+                
+                # Ограничиваем количество chunk'ов для тестирования
+                if chunk_count >= 100:  # Увеличиваем лимит для полного ответа
+                    logger.info(f"⏹️ Stopping after {chunk_count} chunks")
+                    break
+            
+            # Сохраняем полный ответ в БД
+            await self._save_bot_message(message_id, conversation_id, full_response)
+            
+            # Отправляем завершающий сигнал на фронтенд
+            await self._send_done_to_frontend(request_id, message_id, conversation_id)
+            
             logger.info(f"✅ AI processing completed for message {message_id}")
             logger.info(f"   - Request ID: {request_id}")
             logger.info(f"   - Conversation ID: {conversation_id}")
             logger.info(f"   - User: {user_context.get('email')}")
-            
-            # TODO: Реальный вызов api/conversation_cloud
-            # response = await self._make_conversation_request(conversation_data)
+            logger.info(f"📊 Total chunks: {chunk_count}")
+            logger.info(f"📝 Response length: {len(full_response)} characters")
             
         except Exception as e:
-            logger.error(f"💥 Error calling conversation_cloud: {e}")
+            logger.error(f"💥 Error calling cloud.ru API: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    async def _send_chunk_to_frontend(self, content, request_id):
+        """Отправка chunk'а на фронтенд"""
+        try:
+            import aiohttp
+            
+            # Формируем SSE сообщение
+            sse_data = f"data: {json.dumps({'type': 'message', 'content': content})}\n\n"
+            
+            # Отправляем на фронтенд
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"http://host.docker.internal:8003/internal/stream/",
+                    data=sse_data,
+                    headers={'Content-Type': 'text/plain; charset=utf-8'}
+                ) as response:
+                    if response.status == 200:
+                        logger.debug(f"📤 Chunk sent to frontend: '{content}'")
+                    else:
+                        logger.warning(f"⚠️ Failed to send chunk to frontend: {response.status}")
+                        
+        except Exception as e:
+            logger.error(f"❌ Error sending chunk to frontend: {e}")
+    
+    async def _send_done_to_frontend(self, request_id, message_id, conversation_id):
+        """Отправка завершающего сигнала на фронтенд"""
+        try:
+            import aiohttp
+            
+            # Формируем завершающее SSE сообщение
+            done_data = {
+                'type': 'done',
+                'messageId': str(message_id),
+                'conversationId': str(conversation_id),
+                'newDocId': None
+            }
+            sse_data = f"data: {json.dumps(done_data)}\n\n"
+            
+            # Отправляем на фронтенд
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"http://host.docker.internal:8003/internal/stream/",
+                    data=sse_data,
+                    headers={'Content-Type': 'text/plain; charset=utf-8'}
+                ) as response:
+                    if response.status == 200:
+                        logger.info(f"✅ Done signal sent to frontend")
+                    else:
+                        logger.warning(f"⚠️ Failed to send done signal: {response.status}")
+                        
+        except Exception as e:
+            logger.error(f"❌ Error sending done signal: {e}")
+    
+    async def _save_bot_message(self, message_id, conversation_id, response_text):
+        """Сохранение ответа бота в БД через HTTP API"""
+        try:
+            import aiohttp
+            
+            # Формируем данные для сохранения
+            bot_message_data = {
+                "message": response_text,
+                "conversation_id": conversation_id,
+                "is_bot": True,
+                "message_type": 0
+            }
+            
+            # Отправляем POST запрос к API для сохранения сообщения
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "http://host.docker.internal:8003/api/chat/messages/",
+                    json=bot_message_data,
+                    headers={'Content-Type': 'application/json'}
+                ) as response:
+                    if response.status == 201:
+                        result = await response.json()
+                        logger.info(f"✅ Bot message saved successfully with ID: {result.get('id')}")
+                    else:
+                        logger.warning(f"⚠️ Failed to save bot message: {response.status}")
+                        
+        except Exception as e:
+            logger.error(f"❌ Error saving bot message: {e}")
     
     async def _make_conversation_request(self, data):
         """Выполнение HTTP запроса к api/conversation_cloud"""

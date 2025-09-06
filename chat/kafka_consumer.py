@@ -103,26 +103,191 @@ class ChatKafkaConsumer:
             logger.error(f"📄 Message data: {message_data}")
     
     async def start_ai_processing(self, message_id, conversation_id, user_message, user_email, stream_id):
-        """Запуск AI обработки (заглушка для тестирования)"""
+        """Запуск AI обработки с streaming через cloud.ru API"""
         try:
             logger.info(f"🤖 Starting AI processing for stream_id: {stream_id}")
             logger.info(f"   - Message ID: {message_id}")
             logger.info(f"   - Conversation ID: {conversation_id}")
             logger.info(f"   - User: {user_email}")
             
-            # Временная заглушка - просто логируем что получили
-            logger.info(f"📤 User message: {user_message}")
+            # Получаем API ключ из переменных окружения
+            import os
+            openai_api_key = os.getenv('OPENAI_API_KEY')
+            if not openai_api_key:
+                logger.error("❌ OPENAI_API_KEY not found in environment variables")
+                return
             
-            # TODO: Здесь будет:
-            # 1. Получение истории разговора из БД
-            # 2. Вызов api/conversation_cloud с streaming
-            # 3. Передача stream на фронтенд
-            # 4. Сохранение ответа AI в БД
+            # Импортируем openai для streaming
+            import openai
+            
+            # Настраиваем OpenAI для cloud.ru
+            openai.api_key = openai_api_key
+            openai.api_base = "https://foundation-models.api.cloud.ru/v1"
+            
+            logger.info(f"🌐 Using cloud.ru API: {openai.api_base}")
+            
+            # Формируем сообщения для API
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": user_message}
+            ]
+            
+            # Вызываем cloud.ru API с streaming
+            logger.info(f"📡 Calling cloud.ru API with streaming...")
+            
+            response = openai.ChatCompletion.create(
+                model="deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+                messages=messages,
+                max_tokens=1000,
+                temperature=0.7,
+                top_p=0.95,
+                presence_penalty=0,
+                frequency_penalty=0,
+                stream=True
+            )
+            
+            # Собираем полный ответ и отправляем на фронтенд
+            full_response = ""
+            chunk_count = 0
+            
+            for chunk in response:
+                chunk_count += 1
+                
+                # Проверяем структуру chunk
+                if hasattr(chunk, 'choices') and chunk.choices:
+                    choice = chunk.choices[0]
+                    
+                    if hasattr(choice, 'delta') and choice.delta:
+                        delta = choice.delta
+                        
+                        # Обрабатываем reasoning_content (DeepSeek модель)
+                        if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                            content = delta.reasoning_content
+                            full_response += content
+                            
+                            # Отправляем chunk на фронтенд
+                            await self.send_chunk_to_frontend(content, stream_id)
+                            
+                        # Обрабатываем content (стандартный OpenAI)
+                        elif hasattr(delta, 'content') and delta.content:
+                            content = delta.content
+                            full_response += content
+                            
+                            # Отправляем chunk на фронтенд
+                            await self.send_chunk_to_frontend(content, stream_id)
+                
+                # Ограничиваем количество chunk'ов для тестирования
+                if chunk_count >= 100:  # Увеличиваем лимит для полного ответа
+                    logger.info(f"⏹️ Stopping after {chunk_count} chunks")
+                    break
+            
+            # Сохраняем полный ответ в БД
+            await self.save_bot_message(message_id, conversation_id, full_response)
+            
+            # Отправляем завершающий сигнал на фронтенд
+            await self.send_done_to_frontend(stream_id, message_id, conversation_id)
             
             logger.info(f"✅ AI processing completed for stream_id: {stream_id}")
+            logger.info(f"📊 Total chunks: {chunk_count}")
+            logger.info(f"📝 Response length: {len(full_response)} characters")
             
         except Exception as e:
             logger.error(f"💥 AI processing failed for stream_id: {stream_id}, error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    async def send_chunk_to_frontend(self, content, stream_id):
+        """Отправка chunk'а на фронтенд"""
+        try:
+            import aiohttp
+            
+            # Формируем SSE сообщение
+            sse_data = f"data: {json.dumps({'type': 'message', 'content': content})}\n\n"
+            
+            # Отправляем на фронтенд
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"http://host.docker.internal:8020/api/chat/stream",
+                    data=sse_data,
+                    headers={'Content-Type': 'text/plain; charset=utf-8'}
+                ) as response:
+                    if response.status == 200:
+                        logger.debug(f"📤 Chunk sent to frontend: '{content}'")
+                    else:
+                        logger.warning(f"⚠️ Failed to send chunk to frontend: {response.status}")
+                        
+        except Exception as e:
+            logger.error(f"❌ Error sending chunk to frontend: {e}")
+    
+    async def send_done_to_frontend(self, stream_id, message_id, conversation_id):
+        """Отправка завершающего сигнала на фронтенд"""
+        try:
+            import aiohttp
+            
+            # Формируем завершающее SSE сообщение
+            done_data = {
+                'type': 'done',
+                'messageId': str(message_id),
+                'conversationId': str(conversation_id),
+                'newDocId': None
+            }
+            sse_data = f"data: {json.dumps(done_data)}\n\n"
+            
+            # Отправляем на фронтенд
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"http://host.docker.internal:8020/api/chat/stream",
+                    data=sse_data,
+                    headers={'Content-Type': 'text/plain; charset=utf-8'}
+                ) as response:
+                    if response.status == 200:
+                        logger.info(f"✅ Done signal sent to frontend")
+                    else:
+                        logger.warning(f"⚠️ Failed to send done signal: {response.status}")
+                        
+        except Exception as e:
+            logger.error(f"❌ Error sending done signal: {e}")
+    
+    async def save_bot_message(self, message_id, conversation_id, response_text):
+        """Сохранение ответа бота в БД"""
+        try:
+            from django.apps import apps
+            from asgiref.sync import sync_to_async
+            
+            # Получаем модели
+            Message = apps.get_model('chat', 'Message')
+            Conversation = apps.get_model('chat', 'Conversation')
+            
+            # Находим беседу
+            conversation = await sync_to_async(Conversation.objects.get)(
+                conversation_id=conversation_id
+            )
+            
+            # Получаем следующий message_id для этой беседы
+            last_message = await sync_to_async(Message.objects.filter)(
+                conversation_id=conversation_id
+            ).order_by('-message_id').first()
+            
+            next_message_id = 1 if not last_message else last_message.message_id + 1
+            
+            # Создаем сообщение бота
+            bot_message = await sync_to_async(Message.objects.create)(
+                conversation=conversation.id,  # Используем глобальный ID
+                conversation_id=conversation_id,
+                message_id=next_message_id,
+                message=response_text,
+                is_bot=True,
+                message_type=0,
+                tokens=0
+            )
+            
+            logger.info(f"✅ Bot message saved successfully with ID: {bot_message.id}")
+            logger.info(f"✅ Bot message saved with ID: {bot_message.id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error saving bot message: {e}")
+            import traceback
+            traceback.print_exc()
     
     async def consume_messages(self):
         """Основной цикл потребления сообщений из Kafka"""

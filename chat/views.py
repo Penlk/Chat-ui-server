@@ -142,8 +142,22 @@ class ConversationViewSet(viewsets.ModelViewSet):
         conversation_id = kwargs.get('pk')
         try:
             conversation = Conversation.objects.get(sub=user_sub, conversation_id=conversation_id)
+            
+            # Сначала удаляем все сообщения этой беседы
+            deleted_messages_count = Message.objects.filter(
+                sub=user_sub, 
+                conversation_id=conversation_id
+            ).delete()[0]
+            
+            # Затем удаляем саму беседу
             conversation.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
+            
+            return Response({
+                "deleted": True,
+                "conversation_id": conversation_id,
+                "deleted_messages_count": deleted_messages_count
+            }, status=status.HTTP_200_OK)
+            
         except Conversation.DoesNotExist:
             return Response({"error": "Conversation not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -812,107 +826,78 @@ def conversation_cloud(request):
 
     def stream_content_simple():
         try:
-            # Прямая интеграция с cloud.ru API
-            import requests
+            # Используем библиотеку openai для streaming запроса к cloud.ru
+            import openai
+            
+            # Настраиваем openai для cloud.ru
+            openai.api_key = openai_api_key
+            openai.api_base = "https://foundation-models.api.cloud.ru/v1"
             
             # Формируем сообщения
             messages = [{"role": "system", "content": system_content}]
             for msg in message_object_list:
                 messages.append({"role": msg['role'], "content": msg['content']})
             
-            # Данные для запроса к cloud.ru
-            cloud_data = {
-                "model": model['name'],
-                "messages": messages,
-                "temperature": temperature,
-                "top_p": top_p,
-                "max_tokens": model['max_response_tokens'],
-                "frequency_penalty": frequency_penalty,
-                "presence_penalty": presence_penalty,
-                "stream": True
-            }
+            logger.info('conversation_cloud: using openai library for streaming')
+            logger.info('conversation_cloud: model = %s', model['name'])
+            logger.info('conversation_cloud: messages count = %d', len(messages))
             
-            # Заголовки для cloud.ru API
-            headers = {
-                'Authorization': f'Bearer {openai_api_key}',
-                'Content-Type': 'application/json'
-            }
-            
-            logger.info('conversation_cloud: sending direct request to cloud.ru')
-            logger.info('conversation_cloud: URL = https://foundation-models.api.cloud.ru/v1/chat/completions')
-            logger.info('conversation_cloud: data = %s', cloud_data)
-            logger.info('conversation_cloud: headers = %s', {k: v[:20] + '...' if k == 'Authorization' else v for k, v in headers.items()})
-            
-            # Отправляем запрос к cloud.ru
-            response = requests.post(
-                'https://foundation-models.api.cloud.ru/v1/chat/completions',
-                headers=headers,
-                json=cloud_data,
-                stream=True,
-                timeout=60
+            # Делаем streaming запрос через openai библиотеку
+            response = openai.ChatCompletion.create(
+                model=model['name'],
+                messages=messages,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=model['max_response_tokens'],
+                frequency_penalty=frequency_penalty,
+                presence_penalty=presence_penalty,
+                stream=True
             )
-            
-            logger.info('conversation_cloud: cloud.ru response status = %s', response.status_code)
-            
-            if response.status_code != 200:
-                error_text = response.text
-                logger.error('conversation_cloud: cloud.ru error: %s', error_text)
-                yield sse_pack('error', {
-                    'error': f'Cloud.ru API error: {response.status_code} - {error_text}'
-                })
-                return
             
             completion_text = ''
             
-            # Обрабатываем stream ответ от cloud.ru
-            for line in response.iter_lines():
-                if line:
-                    line_str = line.decode('utf-8')
-                    logger.info('conversation_cloud: received line: %s', line_str)
+            # Обрабатываем streaming ответ
+            for chunk in response:
+                logger.debug('conversation_cloud: received chunk: %s', chunk)
+                
+                if chunk.choices:
+                    choice = chunk.choices[0]
+                    delta = choice.delta
                     
-                    if line_str.startswith('data: '):
-                        data_str = line_str[6:]  # Убираем 'data: '
-                        
-                        if data_str.strip() == '[DONE]':
-                            logger.info('conversation_cloud: stream finished')
-                            break
-                            
-                        try:
-                            data_json = json.loads(data_str)
-                            if 'choices' in data_json and len(data_json['choices']) > 0:
-                                choice = data_json['choices'][0]
-                                
-                                if 'finish_reason' in choice and choice['finish_reason'] is not None:
-                                    logger.info('conversation_cloud: finished with reason: %s', choice['finish_reason'])
-                                    break
-                                    
-                                if 'delta' in choice:
-                                    delta = choice['delta']
-                                    # Обрабатываем как content, так и reasoning_content
-                                    if 'content' in delta:
-                                        content = delta['content']
-                                        completion_text += content
-                                        yield sse_pack('message', {'content': content})
-                                    elif 'reasoning_content' in delta:
-                                        content = delta['reasoning_content']
-                                        completion_text += content
-                                        yield sse_pack('message', {'content': content})
-                                    
-                        except json.JSONDecodeError as e:
-                            logger.warning('conversation_cloud: failed to parse JSON: %s', e)
-                            continue
+                    # Обрабатываем content (стандартный OpenAI)
+                    if hasattr(delta, 'content') and delta.content:
+                        content = delta.content
+                        completion_text += content
+                        logger.debug('conversation_cloud: content chunk: %s', content)
+                        yield sse_pack('message', {'content': content})
+                    
+                    # Обрабатываем reasoning_content (DeepSeek модель)
+                    if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                        reasoning_content = delta.reasoning_content
+                        completion_text += reasoning_content
+                        logger.debug('conversation_cloud: reasoning_content chunk: %s', reasoning_content)
+                        yield sse_pack('message', {'content': reasoning_content})
+                    
+                    # Проверяем завершение
+                    if hasattr(choice, 'finish_reason') and choice.finish_reason:
+                        logger.info('conversation_cloud: stream finished with reason: %s', choice.finish_reason)
+                        break
             
+            # Завершаем stream
             yield sse_pack('done', {
-                'messageId': 'temp-id',
+                'messageId': 'stream-complete',
                 'conversationId': conversation_id or 'new',
                 'newDocId': None,
             })
             
+            logger.info('conversation_cloud: streaming completed, total length: %d', len(completion_text))
+            
         except Exception as e:
-            logger.error('conversation_cloud: error: %s', str(e))
+            logger.error('conversation_cloud: streaming error: %s', str(e))
             yield sse_pack('error', {
-                'error': str(e)
+                'error': f'Streaming error: {str(e)}'
             })
+            logger.info('conversation_cloud: stream finished')
             return
 
     response = StreamingHttpResponse(

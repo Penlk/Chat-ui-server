@@ -27,6 +27,7 @@ services:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ENABLE_KAFKA=true
       - MOCK_AUTH=true
+      - OPENAI_API_KEY=YzU1MGExYWYtODhiYy00MWE1LWIzMjAtMWMxMGYxN2IzZGVh.bbf892ff8b0054533d307ed3ba2ffae5
     ports:
       - "8003:8010"
     depends_on:

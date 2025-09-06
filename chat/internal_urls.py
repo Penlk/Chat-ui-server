@@ -12,7 +12,8 @@ urlpatterns = [
     path('kafka-status/', internal_views.kafka_status, name='kafka_status'),
     path('metrics/', internal_views.service_metrics, name='service_metrics'),
     
-
+    # SSE endpoint для получения streaming данных от Kafka Consumer
+    path('stream/', internal_views.stream_endpoint, name='stream_endpoint'),
     
     # Fallback HTTP endpoints (legacy поддержка)
     path('test-kafka/', internal_views.test_kafka_integration, name='test_kafka_integration'),
