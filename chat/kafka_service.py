@@ -161,8 +161,8 @@ class KafkaService:
     async def send_message(self, topic: str, message: Dict[str, Any], key: Optional[str] = None):
         """Отправка сообщения в топик"""
         if not self.producer:
-            logger.warning("⚠️ Kafka producer not started, skipping message")
-            return
+            logger.warning("⚠️ Kafka producer not started, starting it...")
+            await self.start_producer()
             
         try:
             await self.producer.send(
@@ -171,9 +171,20 @@ class KafkaService:
                 key=key.encode('utf-8') if key else None
             )
             logger.debug("📤 Sent message to %s", topic)
+            return True
         except KafkaError as e:
             logger.error("❌ Failed to send to %s: %s", topic, e)
-            raise
+            # Перезапускаем producer при ошибке
+            logger.info("🔄 Restarting Kafka producer...")
+            try:
+                if self.producer:
+                    await self.producer.stop()
+                self.producer = None
+                await self.start_producer()
+                logger.info("✅ Kafka producer restarted")
+            except Exception as restart_error:
+                logger.error("❌ Failed to restart Kafka producer: %s", restart_error)
+            return False
 
     async def start(self):
         """Запуск Kafka сервиса"""

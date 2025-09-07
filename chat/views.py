@@ -255,24 +255,46 @@ class MessageViewSet(viewsets.ModelViewSet):
                 }
             }
             
+            import json
             logger.info(f"📤 Kafka сообщение: {json.dumps(kafka_message, indent=2)}")
             
             # Отправляем сообщение в Kafka
             try:
-                from .kafka_service import kafka_service
                 import asyncio
+                from aiokafka import AIOKafkaProducer
+                import os
                 
-                # Создаем задачу для отправки в Kafka
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(kafka_service.send_message(
-                    topic="chat-ui-messages",
-                    message=kafka_message,
-                    key=str(message_instance.id)
-                ))
-                loop.close()
+                async def send_to_kafka():
+                    producer = None
+                    try:
+                        # Создаем новый Producer для этого запроса
+                        producer = AIOKafkaProducer(
+                            bootstrap_servers=os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:29092'),
+                            value_serializer=lambda v: json.dumps(v, default=str).encode('utf-8')
+                        )
+                        await producer.start()
+                        
+                        # Отправляем сообщение
+                        await producer.send(
+                            topic="chat-ui-messages",
+                            value=kafka_message,
+                            key=str(message_instance.id).encode('utf-8')
+                        )
+                        
+                        logger.info(f"✅ Сообщение {message_instance.id} отправлено в Kafka")
+                        return True
+                    except Exception as e:
+                        logger.error(f"❌ Ошибка отправки в Kafka: {e}")
+                        return False
+                    finally:
+                        if producer:
+                            await producer.stop()
                 
-                logger.info(f"✅ Сообщение {message_instance.id} отправлено в Kafka")
+                # Используем asyncio.run() для создания нового event loop
+                success = asyncio.run(send_to_kafka())
+                
+                if not success:
+                    logger.error(f"❌ Не удалось отправить сообщение {message_instance.id} в Kafka")
             except Exception as e:
                 logger.error(f"❌ Ошибка отправки в Kafka: {e}")
             
