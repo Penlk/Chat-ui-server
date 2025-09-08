@@ -21,6 +21,7 @@ from .models import Conversation, Message, EmbeddingDocument, Setting, Prompt, P
 from django.conf import settings
 from django.http import StreamingHttpResponse
 from django.forms.models import model_to_dict
+from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -166,6 +167,8 @@ class ConversationViewSet(viewsets.ModelViewSet):
         queryset = self.filter_queryset(self.get_queryset())
         queryset.delete()
         return Response(status=204)
+
+    
 
 
 class MessageViewSet(viewsets.ModelViewSet):
@@ -391,6 +394,56 @@ class MessageViewSet(viewsets.ModelViewSet):
             
         except Conversation.DoesNotExist:
             return Response({"error": f"Conversation with conversation_id {conversation_id} not found for user"}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['put'], url_path='edit-message')
+    def edit_message(self, request, pk=None):
+        """
+        Редактирует пользовательское сообщение и удаляет все более поздние сообщения этой беседы.
+
+        URL: PUT /messages/{message_id}/edit-message?conversationId=...
+        Body: {"message": <str>}
+        """
+        user_sub = getattr(request, 'user_id', None)
+        if not user_sub:
+            return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        conversation_id = request.query_params.get('conversationId')
+        if not conversation_id:
+            return Response({"error": "conversationId parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        new_text = request.data.get('message')
+        if new_text is None:
+            return Response({"error": "message field is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # pk — это message_id в рамках беседы
+            target = Message.objects.get(sub=user_sub, conversation_id=conversation_id, message_id=pk)
+        except Message.DoesNotExist:
+            return Response({"error": "Message not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if target.is_bot:
+            return Response({"error": "Bot messages cannot be edited"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Обновляем текст сообщения
+        target.message = new_text
+        target.save(update_fields=['message'])
+
+        # Удаляем все последующие сообщения (и пользовательские, и бота)
+        # Определяем "позже" по времени создания, с развязкой по id на случай одинаковых created_at
+        deleted_count = Message.objects.filter(
+            sub=user_sub,
+            conversation_id=conversation_id
+        ).filter(
+            Q(created_at__gt=target.created_at) |
+            Q(created_at=target.created_at, id__gt=target.id)
+        ).delete()[0]
+
+        return Response({
+            "edited": True,
+            "deleted_following": deleted_count,
+            "conversation_id": int(conversation_id),
+            "message_id": int(target.message_id)
+        }, status=status.HTTP_200_OK)
 
 
 class PromptViewSet(viewsets.ModelViewSet):
