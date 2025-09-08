@@ -424,9 +424,8 @@ class MessageViewSet(viewsets.ModelViewSet):
         if target.is_bot:
             return Response({"error": "Bot messages cannot be edited"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Обновляем текст сообщения
+        # Обновляем текст сообщения (не сохраняем сразу created_at)
         target.message = new_text
-        target.save(update_fields=['message'])
 
         # Удаляем все последующие сообщения (и пользовательские, и бота)
         # Определяем "позже" по времени создания, с развязкой по id на случай одинаковых created_at
@@ -438,6 +437,11 @@ class MessageViewSet(viewsets.ModelViewSet):
             Q(created_at=target.created_at, id__gt=target.id)
         ).delete()[0]
 
+        # После удаления переносим это сообщение в текущий момент
+        from django.utils import timezone
+        target.created_at = timezone.now()
+        target.save(update_fields=['message', 'created_at'])
+        
         return Response({
             "edited": True,
             "deleted_following": deleted_count,
