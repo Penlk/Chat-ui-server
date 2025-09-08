@@ -38,7 +38,7 @@ class Conversation(models.Model):
     org_id = models.CharField(max_length=36, null=True, blank=True, db_index=True, help_text="Идентификатор организации")
     conversation_id = models.IntegerField(default=0, help_text="Порядковый номер беседы для пользователя")
     topic = models.CharField(max_length=255, help_text="Тема разговора")
-    project = models.ForeignKey(Project, on_delete=models.SET_NULL, null=True, blank=True, related_name='conversations', help_text="Проект, к которому принадлежит разговор")
+    project = models.ForeignKey('Project', on_delete=models.SET_NULL, null=True, blank=True, related_name='conversations', help_text="Проект, к которому принадлежит разговор")
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 

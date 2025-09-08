@@ -1,6 +1,6 @@
 from django.db import models
 from rest_framework import serializers
-from .models import Conversation, Message, Prompt, EmbeddingDocument, Setting
+from .models import Conversation, Message, Prompt, EmbeddingDocument, Setting, Project
 
 class ConversationSerializer(serializers.ModelSerializer):
     class Meta:

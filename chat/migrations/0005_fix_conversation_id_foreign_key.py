@@ -8,16 +8,14 @@ class Migration(migrations.Migration):
         ('chat', '0004_change_conversation_to_integer'),
     ]
 
+    def drop_bad_fk(apps, schema_editor):
+        # Выполняем удаление CONSTRAINT только в PostgreSQL. SQLite не поддерживает DROP CONSTRAINT.
+        if getattr(schema_editor.connection, 'vendor', None) != 'postgresql':
+            return
+        schema_editor.execute(
+            "ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_conversation_id_5ef638db_fk_conversations_id;"
+        )
+
     operations = [
-        # Удаляем неправильный foreign key constraint
-        migrations.RunSQL(
-            sql="ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_conversation_id_5ef638db_fk_conversations_id;",
-            reverse_sql="-- Не можем восстановить constraint, так как он был неправильным"
-        ),
-        
-        # Добавляем правильный индекс для conversation_id
-        migrations.RunSQL(
-            sql="CREATE INDEX IF NOT EXISTS messages_conversation_id_idx ON messages(conversation_id);",
-            reverse_sql="DROP INDEX IF EXISTS messages_conversation_id_idx;"
-        ),
+        migrations.RunPython(drop_bad_fk, reverse_code=migrations.RunPython.noop),
     ]
