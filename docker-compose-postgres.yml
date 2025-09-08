@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   postgres:
@@ -27,7 +26,6 @@ services:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ENABLE_KAFKA=true
       - MOCK_AUTH=true
-      - OPENAI_API_KEY=YzU1MGExYWYtODhiYy00MWE1LWIzMjAtMWMxMGYxN2IzZGVh.bbf892ff8b0054533d307ed3ba2ffae5
     ports:
       - "8003:8010"
     depends_on:
@@ -70,8 +68,6 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2184
       ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2184:2184"
     networks:
       - chat-network
 

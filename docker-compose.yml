@@ -1,4 +1,3 @@
-version: '3'
 services:
   wsgi-server:
     build:
@@ -41,8 +40,6 @@ services:
     image: confluentinc/cp-zookeeper:7.4.0
     hostname: chat-service-zookeeper
     container_name: chat-service-zookeeper
-    ports:
-      - "2184:2181"  # Уникальный порт для chat-service
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
